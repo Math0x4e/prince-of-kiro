@@ -134,6 +134,149 @@ const StorageManager = {
     }
 };
 
+// Effect Generators
+
+// Create a trail particle at the specified position
+function createTrailParticle(x, y) {
+    return {
+        x: x,
+        y: y,
+        velocityX: 0,
+        velocityY: 0,
+        life: 0,
+        maxLife: 30,           // 30 frames (~0.5 seconds at 60 FPS)
+        size: 8,
+        color: '#790ECB',      // Kiro purple
+        type: 'trail',
+        opacity: 0.6
+    };
+}
+
+// Particle System - Unified engine for all visual effects
+const ParticleSystem = {
+    particles: [],
+    maxParticles: 500,
+    
+    // Add a particle or array of particles to the system
+    add(particle) {
+        if (Array.isArray(particle)) {
+            particle.forEach(p => this.add(p));
+            return;
+        }
+        
+        // Enforce particle limit - remove oldest particles if at max
+        if (this.particles.length >= this.maxParticles) {
+            this.particles.shift();
+        }
+        
+        this.particles.push(particle);
+    },
+    
+    // Update all particles (aging, movement, lifecycle management)
+    update(deltaTime = 1) {
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            const p = this.particles[i];
+            
+            // Age the particle
+            p.life += deltaTime;
+            
+            // Update position based on velocity
+            p.x += p.velocityX;
+            p.y += p.velocityY;
+            
+            // Type-specific updates
+            if (p.type === 'trail') {
+                // Trail particles fade out over time
+                p.opacity = Math.max(0, 0.6 * (1 - p.life / p.maxLife));
+            } else if (p.type === 'explosion') {
+                // Explosion particles shrink and fade
+                const lifeRatio = p.life / p.maxLife;
+                p.opacity = Math.max(0, 1 - lifeRatio);
+                p.size = Math.max(0, p.size * (1 - lifeRatio * 0.05));
+            } else if (p.type === 'sparkle') {
+                // Sparkle particles pulse with sinusoidal animation
+                const pulseValue = Math.sin(p.pulsePhase + p.life * 0.1);
+                p.opacity = 0.5 + pulseValue * 0.5;
+                p.scale = 0.8 + pulseValue * 0.4;
+                p.y += p.velocityY; // Slow upward drift
+            } else if (p.type === 'confetti') {
+                // Confetti particles fall with gravity and rotate
+                p.velocityY += 0.1; // Gravity
+                p.rotation += p.rotationSpeed;
+            }
+            
+            // Remove particles that have exceeded their lifetime
+            if (p.life >= p.maxLife) {
+                this.particles.splice(i, 1);
+                continue;
+            }
+            
+            // Remove particles that have moved outside canvas boundaries
+            if (p.x < -50 || p.x > canvas.width + 50 || 
+                p.y < -50 || p.y > canvas.height + 50) {
+                this.particles.splice(i, 1);
+            }
+        }
+    },
+    
+    // Render all particles to the canvas
+    render(ctx) {
+        this.particles.forEach(p => {
+            ctx.save();
+            ctx.globalAlpha = p.opacity;
+            
+            if (p.type === 'trail') {
+                // Draw trail as a circle
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (p.type === 'explosion') {
+                // Draw explosion particle as a circle
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (p.type === 'sparkle') {
+                // Draw sparkle as a star shape with pulsing scale
+                const scale = p.scale || 1;
+                ctx.fillStyle = p.color;
+                ctx.translate(p.x, p.y);
+                ctx.scale(scale, scale);
+                
+                // Draw 4-pointed star
+                ctx.beginPath();
+                for (let i = 0; i < 4; i++) {
+                    const angle = (i * Math.PI / 2);
+                    const outerRadius = p.size * 2;
+                    const innerRadius = p.size * 0.5;
+                    
+                    ctx.lineTo(Math.cos(angle) * outerRadius, Math.sin(angle) * outerRadius);
+                    ctx.lineTo(
+                        Math.cos(angle + Math.PI / 4) * innerRadius,
+                        Math.sin(angle + Math.PI / 4) * innerRadius
+                    );
+                }
+                ctx.closePath();
+                ctx.fill();
+            } else if (p.type === 'confetti') {
+                // Draw confetti as a rotated rectangle
+                ctx.fillStyle = p.color;
+                ctx.translate(p.x, p.y);
+                ctx.rotate(p.rotation);
+                ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+            }
+            
+            ctx.restore();
+        });
+    },
+    
+    // Clear all particles (useful for level transitions)
+    clear() {
+        this.particles = [];
+    }
+};
+
 // Game State
 let gameState = {
     currentLevel: 1,
@@ -270,6 +413,10 @@ function loadLevel(levelNum) {
             spot.opacity = 0.6;
             spot.fleeing = false;
             spot.fleeVelocity = 0;
+            // Initialize position tracking for trail particles
+            spot.lastX = spot.x;
+            spot.lastY = spot.y;
+            spot.trailTimer = 0;
         });
     }
 }
@@ -422,6 +569,26 @@ function checkKiroTriggers() {
         }
         
         if (spot.fleeing) {
+            // Check if position has changed (movement detection)
+            const hasMovedX = spot.x !== spot.lastX;
+            const hasMovedY = spot.y !== spot.lastY;
+            
+            if (hasMovedX || hasMovedY) {
+                // Generate trail particles at the center of the Kiro logo
+                // Only generate every few frames to avoid too many particles
+                spot.trailTimer++;
+                if (spot.trailTimer >= 3) { // Generate trail every 3 frames
+                    const centerX = spot.x + spot.width / 2;
+                    const centerY = spot.y + spot.height / 2;
+                    ParticleSystem.add(createTrailParticle(centerX, centerY));
+                    spot.trailTimer = 0;
+                }
+                
+                // Update last position
+                spot.lastX = spot.x;
+                spot.lastY = spot.y;
+            }
+            
             spot.x += spot.fleeVelocity;
             spot.y -= 2;
             spot.opacity -= 0.02;
@@ -827,6 +994,9 @@ function render() {
         ctx.stroke();
     }
     
+    // Render particle system
+    ParticleSystem.render(ctx);
+    
     // Draw player - Prince of Persia style (slimmer with jump animation)
     const px = player.x;
     const py = player.y;
@@ -1005,6 +1175,9 @@ function gameLoop() {
         gameState.score = Math.floor(gameState.elapsedTime * 10);
         document.getElementById('time-display').textContent = gameState.elapsedTime.toFixed(1) + 's';
         document.getElementById('score-display').textContent = gameState.score;
+        
+        // Update particle system
+        ParticleSystem.update();
     }
     
     render();
