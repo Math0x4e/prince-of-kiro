@@ -1,0 +1,853 @@
+// Game Configuration
+const CONFIG = {
+    gravity: 0.7,
+    jumpPower: 12,
+    moveSpeed: 5,
+    friction: 0.85,
+    maxLives: 3,
+    scorePerSecond: 100
+};
+
+// Canvas Setup
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Game State
+let gameState = {
+    currentLevel: 1,
+    lives: CONFIG.maxLives,
+    score: 0,
+    startTime: Date.now(),
+    elapsedTime: 0,
+    isPaused: false,
+    gameOver: false
+};
+
+// Player Object
+const player = {
+    x: 50,
+    y: 0,
+    width: 28,
+    height: 50,
+    velocityX: 0,
+    velocityY: 0,
+    isGrounded: false,
+    jumpsRemaining: 2,
+    direction: 1, // 1 = right, -1 = left
+    color: '#ffffff'
+};
+
+// Input Handling
+const keys = {
+    left: false,
+    right: false,
+    jump: false,
+    jumpPressed: false
+};
+
+// Kiro Logo State
+let kiroLogo = null;
+const kiroInstances = [];
+
+// Load Kiro Logo
+const kiroImage = new Image();
+kiroImage.src = 'static/kiro-logo.png';
+kiroImage.onload = () => {
+    kiroLogo = kiroImage;
+};
+
+// Level Definitions
+const levels = [
+    {
+        // Level 1 - Tutorial
+        platforms: [
+            { x: 0, y: 560, width: 800, height: 40 }, // Ground
+            { x: 150, y: 480, width: 120, height: 20 },
+            { x: 320, y: 400, width: 100, height: 20 },
+            { x: 500, y: 320, width: 120, height: 20 },
+            { x: 680, y: 240, width: 120, height: 20 }
+        ],
+        traps: [
+            { x: 280, y: 540, width: 30, height: 20, type: 'spike' },
+            { x: 450, y: 540, width: 30, height: 20, type: 'spike' }
+        ],
+        extraLives: [
+            { x: 700, y: 200, width: 20, height: 20, collected: false }
+        ],
+        kiroSpots: [
+            { x: 400, y: 100, width: 80, height: 80, triggerX: 320, active: true },
+            { x: 600, y: 450, width: 60, height: 60, triggerX: 500, active: true }
+        ],
+        exit: { x: 750, y: 200, width: 40, height: 40 }
+    },
+    {
+        // Level 2 - Find the Princess
+        platforms: [
+            { x: 0, y: 560, width: 200, height: 40 },
+            { x: 250, y: 560, width: 550, height: 40 },
+            { x: 100, y: 480, width: 100, height: 20 },
+            { x: 280, y: 420, width: 80, height: 20 },
+            { x: 420, y: 360, width: 100, height: 20 },
+            { x: 580, y: 300, width: 80, height: 20 },
+            { x: 700, y: 240, width: 100, height: 20 },
+            { x: 400, y: 180, width: 120, height: 20 }
+        ],
+        traps: [
+            { x: 210, y: 540, width: 30, height: 20, type: 'spike' },
+            { x: 370, y: 540, width: 40, height: 20, type: 'fire' },
+            { x: 550, y: 540, width: 30, height: 20, type: 'spike' }
+        ],
+        extraLives: [
+            { x: 120, y: 440, width: 20, height: 20, collected: false }
+        ],
+        kiroSpots: [
+            { x: 150, y: 200, width: 70, height: 70, triggerX: 100, active: true },
+            { x: 500, y: 80, width: 80, height: 80, triggerX: 420, active: true },
+            { x: 650, y: 400, width: 60, height: 60, triggerX: 580, active: true }
+        ],
+        exit: null,
+        princess: { x: 430, y: 120, width: 30, height: 50 }
+    }
+];
+
+let currentLevelData = null;
+
+// Initialize Game
+function initGame() {
+    loadLevel(gameState.currentLevel);
+    gameState.startTime = Date.now();
+    gameLoop();
+}
+
+// Load Level
+function loadLevel(levelNum) {
+    currentLevelData = JSON.parse(JSON.stringify(levels[levelNum - 1]));
+    player.x = 50;
+    player.y = 0;
+    player.velocityX = 0;
+    player.velocityY = 0;
+    player.jumpsRemaining = 2;
+    
+    // Reset Kiro instances
+    kiroInstances.length = 0;
+    if (currentLevelData.kiroSpots) {
+        currentLevelData.kiroSpots.forEach(spot => {
+            spot.active = true;
+            spot.opacity = 0.6;
+            spot.fleeing = false;
+            spot.fleeVelocity = 0;
+        });
+    }
+}
+
+// Input Event Listeners
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'a') keys.left = true;
+    if (e.key === 'ArrowRight' || e.key === 'd') keys.right = true;
+    if ((e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') && !keys.jumpPressed) {
+        keys.jump = true;
+        keys.jumpPressed = true;
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'a') keys.left = false;
+    if (e.key === 'ArrowRight' || e.key === 'd') keys.right = false;
+    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') {
+        keys.jump = false;
+        keys.jumpPressed = false;
+    }
+});
+
+// Update Player
+function updatePlayer() {
+    // Horizontal Movement with Inertia
+    if (keys.left) {
+        player.velocityX -= 0.8;
+        player.direction = -1;
+    }
+    if (keys.right) {
+        player.velocityX += 0.8;
+        player.direction = 1;
+    }
+    
+    // Apply friction
+    player.velocityX *= CONFIG.friction;
+    
+    // Clamp velocity
+    player.velocityX = Math.max(-CONFIG.moveSpeed, Math.min(CONFIG.moveSpeed, player.velocityX));
+    
+    // Apply gravity
+    player.velocityY += CONFIG.gravity;
+    
+    // Update position
+    player.x += player.velocityX;
+    player.y += player.velocityY;
+    
+    // Check collisions
+    const wasGrounded = player.isGrounded;
+    player.isGrounded = false;
+    checkPlatformCollisions();
+    
+    // Reset jumps when landing (2 jumps total: ground + air)
+    if (player.isGrounded && !wasGrounded) {
+        player.jumpsRemaining = 2;
+    }
+    
+    // Double Jump
+    if (keys.jump && player.jumpsRemaining > 0) {
+        player.velocityY = -CONFIG.jumpPower;
+        player.jumpsRemaining--;
+        keys.jump = false; // Prevent holding jump
+    }
+    checkTrapCollisions();
+    checkCollectibles();
+    checkKiroTriggers();
+    checkLevelComplete();
+    
+    // Boundary check
+    if (player.x < 0) player.x = 0;
+    if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+    
+    // Fall death
+    if (player.y > canvas.height) {
+        playerDeath();
+    }
+}
+
+// Platform Collision Detection
+function checkPlatformCollisions() {
+    currentLevelData.platforms.forEach(platform => {
+        if (player.x + player.width > platform.x &&
+            player.x < platform.x + platform.width &&
+            player.y + player.height > platform.y &&
+            player.y < platform.y + platform.height) {
+            
+            // Landing on top
+            if (player.velocityY > 0 && player.y + player.height - player.velocityY <= platform.y) {
+                player.y = platform.y - player.height;
+                player.velocityY = 0;
+                player.isGrounded = true;
+            }
+            // Hitting from below
+            else if (player.velocityY < 0 && player.y - player.velocityY >= platform.y + platform.height) {
+                player.y = platform.y + platform.height;
+                player.velocityY = 0;
+            }
+            // Side collision
+            else {
+                if (player.velocityX > 0) {
+                    player.x = platform.x - player.width;
+                } else {
+                    player.x = platform.x + platform.width;
+                }
+                player.velocityX = 0;
+            }
+        }
+    });
+}
+
+// Trap Collision Detection
+function checkTrapCollisions() {
+    currentLevelData.traps.forEach(trap => {
+        if (player.x + player.width > trap.x &&
+            player.x < trap.x + trap.width &&
+            player.y + player.height > trap.y &&
+            player.y < trap.y + trap.height) {
+            playerDeath();
+        }
+    });
+}
+
+// Check Collectibles
+function checkCollectibles() {
+    currentLevelData.extraLives.forEach(life => {
+        if (!life.collected &&
+            player.x + player.width > life.x &&
+            player.x < life.x + life.width &&
+            player.y + player.height > life.y &&
+            player.y < life.y + life.height) {
+            life.collected = true;
+            gameState.lives = Math.min(gameState.lives + 1, 5);
+            updateHUD();
+        }
+    });
+}
+
+// Check Kiro Triggers
+function checkKiroTriggers() {
+    if (!currentLevelData.kiroSpots) return;
+    
+    currentLevelData.kiroSpots.forEach(spot => {
+        if (spot.active && !spot.fleeing) {
+            const distance = Math.abs(player.x - spot.triggerX);
+            if (distance < 80) {
+                spot.fleeing = true;
+                spot.fleeVelocity = player.x < spot.triggerX ? 3 : -3;
+            }
+        }
+        
+        if (spot.fleeing) {
+            spot.x += spot.fleeVelocity;
+            spot.y -= 2;
+            spot.opacity -= 0.02;
+            if (spot.opacity <= 0) {
+                spot.active = false;
+            }
+        }
+    });
+}
+
+// Check Level Complete
+function checkLevelComplete() {
+    // Check exit
+    if (currentLevelData.exit) {
+        const exit = currentLevelData.exit;
+        if (player.x + player.width > exit.x &&
+            player.x < exit.x + exit.width &&
+            player.y + player.height > exit.y &&
+            player.y < exit.y + exit.height) {
+            levelComplete();
+        }
+    }
+    
+    // Check princess
+    if (currentLevelData.princess) {
+        const princess = currentLevelData.princess;
+        if (player.x + player.width > princess.x &&
+            player.x < princess.x + princess.width &&
+            player.y + player.height > princess.y &&
+            player.y < princess.y + princess.height) {
+            gameWin();
+        }
+    }
+}
+
+// Player Death
+function playerDeath() {
+    gameState.lives--;
+    updateHUD();
+    
+    if (gameState.lives <= 0) {
+        gameOver();
+    } else {
+        loadLevel(gameState.currentLevel);
+    }
+}
+
+// Level Complete
+function levelComplete() {
+    gameState.isPaused = true;
+    gameState.currentLevel++;
+    if (gameState.currentLevel > levels.length) {
+        gameWin();
+    } else {
+        showMessage('Level Complete!', 'Prepare for the next challenge...', () => {
+            gameState.isPaused = false;
+            loadLevel(gameState.currentLevel);
+            updateHUD();
+        });
+    }
+}
+
+// Game Win
+function gameWin() {
+    gameState.isPaused = true;
+    const finalTime = ((Date.now() - gameState.startTime) / 1000).toFixed(1);
+    const timeBonus = Math.max(0, 10000 - Math.floor(finalTime * CONFIG.scorePerSecond));
+    gameState.score += timeBonus;
+    updateHUD();
+    
+    showMessage('Victory!', `You found the Princess of Kiro!\\nFinal Score: ${gameState.score}\\nTime: ${finalTime}s`, () => {
+        resetGame();
+    });
+}
+
+// Game Over
+function gameOver() {
+    gameState.isPaused = true;
+    showMessage('Game Over', 'The Prince has fallen...', () => {
+        resetGame();
+    });
+}
+
+// Reset Game
+function resetGame() {
+    gameState.currentLevel = 1;
+    gameState.lives = CONFIG.maxLives;
+    gameState.score = 0;
+    gameState.startTime = Date.now();
+    gameState.isPaused = false;
+    loadLevel(1);
+    updateHUD();
+}
+
+// Show Message
+function showMessage(title, text, callback) {
+    const overlay = document.getElementById('message-overlay');
+    const titleEl = document.getElementById('message-title');
+    const textEl = document.getElementById('message-text');
+    const button = document.getElementById('message-button');
+    
+    titleEl.textContent = title;
+    textEl.textContent = text;
+    overlay.classList.remove('hidden');
+    
+    const handleContinue = () => {
+        overlay.classList.add('hidden');
+        document.removeEventListener('keydown', enterHandler);
+        if (callback) callback();
+    };
+    
+    const enterHandler = (e) => {
+        if (e.key === 'Enter') {
+            handleContinue();
+        }
+    };
+    
+    button.onclick = handleContinue;
+    document.addEventListener('keydown', enterHandler);
+}
+
+// Update HUD
+function updateHUD() {
+    document.getElementById('level-display').textContent = gameState.currentLevel;
+    document.getElementById('lives-display').textContent = gameState.lives;
+    document.getElementById('score-display').textContent = gameState.score;
+}
+
+// Draw Persian Palace Background
+function drawPersianBackground() {
+    // Stars in the night sky
+    ctx.fillStyle = '#ffffff';
+    for (let i = 0; i < 30; i++) {
+        const x = (i * 73) % canvas.width;
+        const y = (i * 47) % 200;
+        const size = (i % 3) + 1;
+        ctx.fillRect(x, y, size, size);
+    }
+    
+    // Moon with purple glow (Kiro theme)
+    ctx.save();
+    ctx.shadowColor = '#790ECB';
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = '#f0f0f0';
+    ctx.beginPath();
+    ctx.arc(700, 80, 35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    
+    // Persian palace silhouette in background
+    ctx.fillStyle = 'rgba(40, 20, 50, 0.6)';
+    
+    // Palace domes
+    ctx.beginPath();
+    ctx.arc(150, 250, 40, Math.PI, 0, true);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(350, 220, 50, Math.PI, 0, true);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(600, 240, 45, Math.PI, 0, true);
+    ctx.fill();
+    
+    // Palace towers
+    ctx.fillRect(130, 250, 40, 150);
+    ctx.fillRect(325, 220, 50, 180);
+    ctx.fillRect(577, 240, 46, 160);
+    
+    // Minarets (thin towers)
+    ctx.fillRect(100, 200, 15, 200);
+    ctx.fillRect(680, 220, 15, 180);
+    
+    // Minaret tops
+    ctx.fillStyle = '#790ECB';
+    ctx.beginPath();
+    ctx.moveTo(100, 200);
+    ctx.lineTo(107.5, 180);
+    ctx.lineTo(115, 200);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(680, 220);
+    ctx.lineTo(687.5, 200);
+    ctx.lineTo(695, 220);
+    ctx.fill();
+    
+    // Windows with purple glow
+    ctx.fillStyle = 'rgba(121, 14, 203, 0.4)';
+    // Tower 1 windows
+    ctx.fillRect(137, 270, 10, 15);
+    ctx.fillRect(153, 270, 10, 15);
+    ctx.fillRect(137, 300, 10, 15);
+    ctx.fillRect(153, 300, 10, 15);
+    
+    // Tower 2 windows
+    ctx.fillRect(335, 250, 12, 18);
+    ctx.fillRect(353, 250, 12, 18);
+    ctx.fillRect(335, 285, 12, 18);
+    ctx.fillRect(353, 285, 12, 18);
+    
+    // Tower 3 windows
+    ctx.fillRect(587, 270, 10, 15);
+    ctx.fillRect(603, 270, 10, 15);
+    ctx.fillRect(587, 300, 10, 15);
+    ctx.fillRect(603, 300, 10, 15);
+    
+    // Decorative arches with Kiro purple
+    ctx.strokeStyle = '#790ECB';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.arc(200 + i * 200, 450, 30, Math.PI, 0, true);
+        ctx.stroke();
+    }
+}
+
+// Render Game
+function render() {
+    // Clear canvas with gradient background
+    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    gradient.addColorStop(0, '#0a0a0a');
+    gradient.addColorStop(0.5, '#1a1a1a');
+    gradient.addColorStop(1, '#2a1a2a'); // Purple tint at bottom
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw Persian palace background elements
+    drawPersianBackground();
+    
+    // Draw Kiro spots (behind windows effect)
+    if (currentLevelData.kiroSpots && kiroLogo) {
+        currentLevelData.kiroSpots.forEach(spot => {
+            if (spot.active) {
+                ctx.save();
+                ctx.globalAlpha = spot.opacity || 0.6;
+                ctx.drawImage(kiroLogo, spot.x, spot.y, spot.width, spot.height);
+                ctx.restore();
+            }
+        });
+    }
+    
+    // Draw platforms
+    ctx.fillStyle = '#2a2a2a';
+    ctx.strokeStyle = '#4a4a4a';
+    ctx.lineWidth = 2;
+    currentLevelData.platforms.forEach(platform => {
+        ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
+        ctx.strokeRect(platform.x, platform.y, platform.width, platform.height);
+    });
+    
+    // Draw traps
+    currentLevelData.traps.forEach(trap => {
+        if (trap.type === 'spike') {
+            ctx.fillStyle = '#ff3333';
+            // Draw spikes
+            const spikeCount = Math.floor(trap.width / 10);
+            for (let i = 0; i < spikeCount; i++) {
+                ctx.beginPath();
+                ctx.moveTo(trap.x + i * 10, trap.y + trap.height);
+                ctx.lineTo(trap.x + i * 10 + 5, trap.y);
+                ctx.lineTo(trap.x + i * 10 + 10, trap.y + trap.height);
+                ctx.fill();
+            }
+        } else if (trap.type === 'fire') {
+            ctx.fillStyle = '#ff6600';
+            ctx.fillRect(trap.x, trap.y, trap.width, trap.height);
+            // Animated flames
+            const flameOffset = Math.sin(Date.now() / 100) * 5;
+            ctx.fillStyle = '#ffaa00';
+            ctx.fillRect(trap.x + 5, trap.y - flameOffset, trap.width - 10, trap.height);
+        }
+    });
+    
+    // Draw extra lives
+    currentLevelData.extraLives.forEach(life => {
+        if (!life.collected) {
+            ctx.fillStyle = '#00ff00';
+            ctx.beginPath();
+            ctx.arc(life.x + life.width / 2, life.y + life.height / 2, life.width / 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('+1', life.x + life.width / 2, life.y + life.height / 2 + 4);
+        }
+    });
+    
+    // Draw exit
+    if (currentLevelData.exit) {
+        const exit = currentLevelData.exit;
+        ctx.fillStyle = '#00ff00';
+        ctx.fillRect(exit.x, exit.y, exit.width, exit.height);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '20px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('→', exit.x + exit.width / 2, exit.y + exit.height / 2 + 7);
+    }
+    
+    // Draw princess
+    if (currentLevelData.princess) {
+        const princess = currentLevelData.princess;
+        const ppx = princess.x;
+        const ppy = princess.y;
+        
+        // Head
+        ctx.fillStyle = '#ffdbac';
+        ctx.beginPath();
+        ctx.arc(ppx + princess.width / 2, ppy + 10, 9, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Hair (long flowing)
+        ctx.fillStyle = '#4a2511';
+        ctx.beginPath();
+        ctx.arc(ppx + princess.width / 2, ppy + 8, 9, Math.PI, 0, true);
+        ctx.fill();
+        ctx.fillRect(ppx + princess.width / 2 - 8, ppy + 10, 4, 12);
+        ctx.fillRect(ppx + princess.width / 2 + 4, ppy + 10, 4, 12);
+        
+        // Crown
+        ctx.fillStyle = '#ffd700';
+        ctx.fillRect(ppx + princess.width / 2 - 7, ppy + 2, 14, 3);
+        ctx.beginPath();
+        ctx.moveTo(ppx + princess.width / 2 - 5, ppy + 2);
+        ctx.lineTo(ppx + princess.width / 2 - 3, ppy - 2);
+        ctx.lineTo(ppx + princess.width / 2 - 1, ppy + 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(ppx + princess.width / 2 + 1, ppy + 2);
+        ctx.lineTo(ppx + princess.width / 2 + 3, ppy - 2);
+        ctx.lineTo(ppx + princess.width / 2 + 5, ppy + 2);
+        ctx.fill();
+        
+        // Purple dress (elegant flowing gown)
+        ctx.fillStyle = '#790ECB';
+        ctx.beginPath();
+        ctx.moveTo(ppx + princess.width / 2 - 10, ppy + 20);
+        ctx.lineTo(ppx + princess.width / 2 + 10, ppy + 20);
+        ctx.lineTo(ppx + princess.width / 2 + 14, ppy + princess.height);
+        ctx.lineTo(ppx + princess.width / 2 - 14, ppy + princess.height);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Dress highlights
+        ctx.fillStyle = '#9a3ee0';
+        ctx.beginPath();
+        ctx.moveTo(ppx + princess.width / 2 - 8, ppy + 22);
+        ctx.lineTo(ppx + princess.width / 2 - 4, ppy + 22);
+        ctx.lineTo(ppx + princess.width / 2 - 6, ppy + princess.height);
+        ctx.lineTo(ppx + princess.width / 2 - 10, ppy + princess.height);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Arms
+        ctx.fillStyle = '#790ECB';
+        ctx.strokeStyle = '#790ECB';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(ppx + princess.width / 2 - 8, ppy + 22);
+        ctx.lineTo(ppx + princess.width / 2 - 12, ppy + 28);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(ppx + princess.width / 2 + 8, ppy + 22);
+        ctx.lineTo(ppx + princess.width / 2 + 12, ppy + 28);
+        ctx.stroke();
+        
+        // Eyes
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(ppx + princess.width / 2 - 4, ppy + 10, 2, 2);
+        ctx.fillRect(ppx + princess.width / 2 + 2, ppy + 10, 2, 2);
+        
+        // Smile
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(ppx + princess.width / 2, ppy + 13, 3, 0, Math.PI);
+        ctx.stroke();
+    }
+    
+    // Draw player - Prince of Persia style (slimmer with jump animation)
+    const px = player.x;
+    const py = player.y;
+    
+    // Determine animation state
+    const isJumping = player.velocityY < -2;
+    const isFalling = player.velocityY > 2;
+    const isMoving = Math.abs(player.velocityX) > 0.5;
+    
+    // Head
+    ctx.fillStyle = '#ffdbac';
+    ctx.beginPath();
+    ctx.arc(px + player.width / 2, py + 10, 8, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Hair/Turban (white)
+    ctx.fillStyle = '#f5f5f5';
+    ctx.beginPath();
+    ctx.arc(px + player.width / 2, py + 8, 8, Math.PI, 0, true);
+    ctx.fill();
+    // Turban band
+    ctx.fillStyle = '#e0e0e0';
+    ctx.fillRect(px + player.width / 2 - 8, py + 8, 16, 3);
+    
+    // Body (white tunic) - slimmer
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(px + player.width / 2 - 9, py + 20);
+    ctx.lineTo(px + player.width / 2 + 9, py + 20);
+    ctx.lineTo(px + player.width / 2 + 7, py + 36);
+    ctx.lineTo(px + player.width / 2 - 7, py + 36);
+    ctx.closePath();
+    ctx.fill();
+    
+    // Tunic shadow/detail
+    ctx.fillStyle = '#f0f0f0';
+    ctx.beginPath();
+    ctx.moveTo(px + player.width / 2, py + 20);
+    ctx.lineTo(px + player.width / 2 + 9, py + 20);
+    ctx.lineTo(px + player.width / 2 + 7, py + 36);
+    ctx.lineTo(px + player.width / 2, py + 36);
+    ctx.closePath();
+    ctx.fill();
+    
+    // Belt
+    ctx.fillStyle = '#8b4513';
+    ctx.fillRect(px + player.width / 2 - 8, py + 32, 16, 3);
+    // Belt buckle
+    ctx.fillStyle = '#d4af37';
+    ctx.fillRect(px + player.width / 2 - 2, py + 31, 4, 5);
+    
+    // Legs (pants) - animated based on state
+    ctx.fillStyle = '#f5f5f5';
+    if (isJumping) {
+        // Legs bent up during jump
+        ctx.fillRect(px + player.width / 2 - 7, py + 36, 5, 10);
+        ctx.fillRect(px + player.width / 2 + 2, py + 36, 5, 10);
+    } else if (isFalling) {
+        // Legs extended during fall
+        ctx.fillRect(px + player.width / 2 - 7, py + 36, 5, 14);
+        ctx.fillRect(px + player.width / 2 + 2, py + 36, 5, 14);
+    } else {
+        // Normal stance
+        ctx.fillRect(px + player.width / 2 - 7, py + 36, 5, 14);
+        ctx.fillRect(px + player.width / 2 + 2, py + 36, 5, 14);
+    }
+    
+    // Boots
+    ctx.fillStyle = '#654321';
+    if (isJumping) {
+        ctx.fillRect(px + player.width / 2 - 7, py + 44, 5, 3);
+        ctx.fillRect(px + player.width / 2 + 2, py + 44, 5, 3);
+    } else {
+        ctx.fillRect(px + player.width / 2 - 7, py + 47, 5, 3);
+        ctx.fillRect(px + player.width / 2 + 2, py + 47, 5, 3);
+    }
+    
+    // Arms - animated based on state
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    
+    if (isJumping) {
+        // Arms up during jump
+        if (player.direction === 1) {
+            ctx.beginPath();
+            ctx.moveTo(px + player.width / 2 + 7, py + 22);
+            ctx.lineTo(px + player.width / 2 + 10, py + 15);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(px + player.width / 2 - 7, py + 22);
+            ctx.lineTo(px + player.width / 2 - 10, py + 15);
+            ctx.stroke();
+        } else {
+            ctx.beginPath();
+            ctx.moveTo(px + player.width / 2 - 7, py + 22);
+            ctx.lineTo(px + player.width / 2 - 10, py + 15);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(px + player.width / 2 + 7, py + 22);
+            ctx.lineTo(px + player.width / 2 + 10, py + 15);
+            ctx.stroke();
+        }
+    } else if (isFalling) {
+        // Arms out during fall
+        ctx.beginPath();
+        ctx.moveTo(px + player.width / 2 + 7, py + 22);
+        ctx.lineTo(px + player.width / 2 + 12, py + 22);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(px + player.width / 2 - 7, py + 22);
+        ctx.lineTo(px + player.width / 2 - 12, py + 22);
+        ctx.stroke();
+    } else {
+        // Normal running pose
+        if (player.direction === 1) {
+            ctx.beginPath();
+            ctx.moveTo(px + player.width / 2 + 7, py + 22);
+            ctx.lineTo(px + player.width / 2 + 12, py + 30);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(px + player.width / 2 - 7, py + 22);
+            ctx.lineTo(px + player.width / 2 - 9, py + 28);
+            ctx.stroke();
+        } else {
+            ctx.beginPath();
+            ctx.moveTo(px + player.width / 2 - 7, py + 22);
+            ctx.lineTo(px + player.width / 2 - 12, py + 30);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(px + player.width / 2 + 7, py + 22);
+            ctx.lineTo(px + player.width / 2 + 9, py + 28);
+            ctx.stroke();
+        }
+    }
+    
+    // Hands
+    ctx.fillStyle = '#ffdbac';
+    if (isJumping) {
+        ctx.beginPath();
+        ctx.arc(px + player.width / 2 + 10 * player.direction, py + 15, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+    } else if (!isFalling) {
+        if (player.direction === 1) {
+            ctx.beginPath();
+            ctx.arc(px + player.width / 2 + 12, py + 30, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+        } else {
+            ctx.beginPath();
+            ctx.arc(px + player.width / 2 - 12, py + 30, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    
+    // Eyes
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(px + player.width / 2 - 3, py + 10, 2, 2);
+    ctx.fillRect(px + player.width / 2 + 1, py + 10, 2, 2);
+    
+    // Nose
+    ctx.strokeStyle = '#d4a574';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px + player.width / 2, py + 12);
+    ctx.lineTo(px + player.width / 2 + 1, py + 14);
+    ctx.stroke();
+}
+
+// Game Loop
+function gameLoop() {
+    if (!gameState.isPaused && !gameState.gameOver) {
+        updatePlayer();
+        
+        // Update time and score
+        gameState.elapsedTime = (Date.now() - gameState.startTime) / 1000;
+        gameState.score = Math.floor(gameState.elapsedTime * 10);
+        document.getElementById('time-display').textContent = gameState.elapsedTime.toFixed(1) + 's';
+        document.getElementById('score-display').textContent = gameState.score;
+    }
+    
+    render();
+    requestAnimationFrame(gameLoop);
+}
+
+// Start Game
+initGame();
