@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Storage Manager Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #ffffff;
+        }
+        .test-section {
+            background: #2a2a2a;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            border: 2px solid #790ECB;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .pass {
+            background: #00ff0033;
+            border-left: 4px solid #00ff00;
+        }
+        .fail {
+            background: #ff000033;
+            border-left: 4px solid #ff0000;
+        }
+        button {
+            background: #790ECB;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #9a3ee0;
+        }
+        pre {
+            background: #0a0a0a;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Storage Manager Test Suite</h1>
+    
+    <div class="test-section">
+        <h2>Test Controls</h2>
+        <button onclick="runAllTests()">Run All Tests</button>
+        <button onclick="clearStorage()">Clear Storage</button>
+        <button onclick="viewStorage()">View Storage</button>
+    </div>
+    
+    <div id="test-results"></div>
+    <div id="storage-view"></div>
+
+    <script>
+        // Storage Manager (copied from game.js)
+        const StorageManager = {
+            STORAGE_KEYS: {
+                HIGH_SCORE: 'princeOfKiro_highScore',
+                SCORE_HISTORY: 'princeOfKiro_scoreHistory'
+            },
+            
+            isAvailable() {
+                try {
+                    const test = '__storage_test__';
+                    localStorage.setItem(test, test);
+                    localStorage.removeItem(test);
+                    return true;
+                } catch (e) {
+                    return false;
+                }
+            },
+            
+            saveScore(time, score, level, date = new Date().toISOString()) {
+                if (!this.isAvailable()) {
+                    console.warn('LocalStorage unavailable - score not saved');
+                    return false;
+                }
+                
+                try {
+                    const history = this.loadScoreHistory();
+                    const newEntry = {
+                        time: time,
+                        score: score,
+                        level: level,
+                        date: date,
+                        id: Date.now().toString() + Math.random().toString(36).substr(2, 9)
+                    };
+                    
+                    history.push(newEntry);
+                    history.sort((a, b) => new Date(a.date) - new Date(b.date));
+                    
+                    localStorage.setItem(this.STORAGE_KEYS.SCORE_HISTORY, JSON.stringify(history));
+                    this.updateHighScore(time);
+                    
+                    return true;
+                } catch (e) {
+                    console.error('Error saving score:', e);
+                    return false;
+                }
+            },
+            
+            loadHighScore() {
+                if (!this.isAvailable()) {
+                    return null;
+                }
+                
+                try {
+                    const highScore = localStorage.getItem(this.STORAGE_KEYS.HIGH_SCORE);
+                    return highScore ? parseFloat(highScore) : null;
+                } catch (e) {
+                    console.error('Error loading high score:', e);
+                    return null;
+                }
+            },
+            
+            loadScoreHistory() {
+                if (!this.isAvailable()) {
+                    return [];
+                }
+                
+                try {
+                    const history = localStorage.getItem(this.STORAGE_KEYS.SCORE_HISTORY);
+                    return history ? JSON.parse(history) : [];
+                } catch (e) {
+                    console.error('Error loading score history:', e);
+                    return [];
+                }
+            },
+            
+            updateHighScore(time) {
+                if (!this.isAvailable()) {
+                    return false;
+                }
+                
+                try {
+                    const currentHighScore = this.loadHighScore();
+                    
+                    if (currentHighScore === null || time < currentHighScore) {
+                        localStorage.setItem(this.STORAGE_KEYS.HIGH_SCORE, time.toString());
+                        return true;
+                    }
+                    
+                    return false;
+                } catch (e) {
+                    console.error('Error updating high score:', e);
+                    return false;
+                }
+            },
+            
+            clearAll() {
+                if (!this.isAvailable()) {
+                    return false;
+                }
+                
+                try {
+                    localStorage.removeItem(this.STORAGE_KEYS.HIGH_SCORE);
+                    localStorage.removeItem(this.STORAGE_KEYS.SCORE_HISTORY);
+                    return true;
+                } catch (e) {
+                    console.error('Error clearing storage:', e);
+                    return false;
+                }
+            }
+        };
+
+        // Test Functions
+        function logResult(testName, passed, message) {
+            const resultsDiv = document.getElementById('test-results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test-result ${passed ? 'pass' : 'fail'}`;
+            resultDiv.innerHTML = `
+                <strong>${passed ? '✅' : '❌'} ${testName}</strong><br>
+                ${message}
+            `;
+            resultsDiv.appendChild(resultDiv);
+        }
+
+        function runAllTests() {
+            document.getElementById('test-results').innerHTML = '<h2>Test Results</h2>';
+            
+            // Clear storage before tests
+            StorageManager.clearAll();
+            
+            // Test 1: Storage Availability
+            const isAvailable = StorageManager.isAvailable();
+            logResult('Storage Availability', isAvailable, 
+                isAvailable ? 'LocalStorage is available' : 'LocalStorage is NOT available');
+            
+            // Test 2: Save Score
+            const saved = StorageManager.saveScore(45.5, 1000, 2);
+            logResult('Save Score', saved, 
+                saved ? 'Score saved successfully' : 'Failed to save score');
+            
+            // Test 3: Load High Score
+            const highScore = StorageManager.loadHighScore();
+            const highScoreCorrect = highScore === 45.5;
+            logResult('Load High Score', highScoreCorrect, 
+                `Expected: 45.5, Got: ${highScore}`);
+            
+            // Test 4: Update High Score (better time)
+            const isNewHighScore = StorageManager.updateHighScore(30.2);
+            logResult('Update High Score (Better)', isNewHighScore, 
+                isNewHighScore ? 'New high score detected correctly' : 'Failed to detect new high score');
+            
+            const updatedHighScore = StorageManager.loadHighScore();
+            const updatedCorrect = updatedHighScore === 30.2;
+            logResult('Verify Updated High Score', updatedCorrect, 
+                `Expected: 30.2, Got: ${updatedHighScore}`);
+            
+            // Test 5: Update High Score (worse time)
+            const notNewHighScore = StorageManager.updateHighScore(50.0);
+            logResult('Update High Score (Worse)', !notNewHighScore, 
+                !notNewHighScore ? 'Correctly rejected worse time' : 'Incorrectly accepted worse time');
+            
+            // Test 6: Score History
+            StorageManager.saveScore(35.0, 1200, 2);
+            StorageManager.saveScore(40.0, 1100, 2);
+            const history = StorageManager.loadScoreHistory();
+            const historyCorrect = history.length === 3;
+            logResult('Score History Count', historyCorrect, 
+                `Expected: 3 entries, Got: ${history.length} entries`);
+            
+            // Test 7: Chronological Sorting
+            const dates = history.map(entry => new Date(entry.date).getTime());
+            const isSorted = dates.every((date, i) => i === 0 || date >= dates[i - 1]);
+            logResult('Chronological Sorting', isSorted, 
+                isSorted ? 'History is sorted chronologically' : 'History is NOT sorted correctly');
+            
+            // Test 8: Data Integrity
+            const firstEntry = history[0];
+            const hasAllFields = firstEntry.time !== undefined && 
+                                 firstEntry.score !== undefined && 
+                                 firstEntry.level !== undefined && 
+                                 firstEntry.date !== undefined && 
+                                 firstEntry.id !== undefined;
+            logResult('Data Integrity', hasAllFields, 
+                hasAllFields ? 'All required fields present' : 'Missing required fields');
+            
+            // Test 9: Clear Storage
+            const cleared = StorageManager.clearAll();
+            const highScoreAfterClear = StorageManager.loadHighScore();
+            const historyAfterClear = StorageManager.loadScoreHistory();
+            const clearCorrect = cleared && highScoreAfterClear === null && historyAfterClear.length === 0;
+            logResult('Clear Storage', clearCorrect, 
+                clearCorrect ? 'Storage cleared successfully' : 'Failed to clear storage');
+        }
+
+        function clearStorage() {
+            StorageManager.clearAll();
+            alert('Storage cleared!');
+            viewStorage();
+        }
+
+        function viewStorage() {
+            const storageDiv = document.getElementById('storage-view');
+            const highScore = StorageManager.loadHighScore();
+            const history = StorageManager.loadScoreHistory();
+            
+            storageDiv.innerHTML = `
+                <div class="test-section">
+                    <h2>Current Storage State</h2>
+                    <h3>High Score:</h3>
+                    <pre>${highScore !== null ? highScore + 's' : 'No high score set'}</pre>
+                    <h3>Score History (${history.length} entries):</h3>
+                    <pre>${JSON.stringify(history, null, 2)}</pre>
+                </div>
+            `;
+        }
+
+        // Run tests on load
+        window.onload = () => {
+            runAllTests();
+            viewStorage();
+        };
+    </script>
+</body>
+</html>

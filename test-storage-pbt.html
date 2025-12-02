@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Property-Based Test: Score Persistence</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #ffffff;
+        }
+        .test-section {
+            background: #2a2a2a;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            border: 2px solid #790ECB;
+        }
+        .test-result {
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .pass {
+            background: #00ff0033;
+            border-left: 4px solid #00ff00;
+        }
+        .fail {
+            background: #ff000033;
+            border-left: 4px solid #ff0000;
+        }
+        button {
+            background: #790ECB;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #9a3ee0;
+        }
+        pre {
+            background: #0a0a0a;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        .property-header {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #790ECB;
+        }
+        .stats {
+            color: #a0a0a0;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #790ECB;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Property-Based Test: Score Persistence</h1>
+    
+    <div class="test-section">
+        <h2>Test Information</h2>
+        <p><strong>Feature:</strong> game-enhancements</p>
+        <p><strong>Property 1:</strong> Score persistence</p>
+        <p><strong>Validates:</strong> Requirements 1.1</p>
+        <p><strong>Description:</strong> For any completed game session with valid time and score data, 
+           saving to Local Storage should result in that data being retrievable with all fields intact 
+           (time, score, level, date).</p>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test Controls</h2>
+        <button onclick="runPropertyTest()">Run Property Test (100 iterations)</button>
+        <button onclick="clearStorage()">Clear Storage</button>
+    </div>
+    
+    <div id="test-results"></div>
+
+    <!-- Load fast-check from CDN (version 2.x has browser support) -->
+    <script src="https://cdn.jsdelivr.net/npm/fast-check@2.25.0/lib/bundle.js"></script>
+    
+    <script>
+        // Storage Manager (from game.js)
+        const StorageManager = {
+            STORAGE_KEYS: {
+                HIGH_SCORE: 'princeOfKiro_highScore',
+                SCORE_HISTORY: 'princeOfKiro_scoreHistory'
+            },
+            
+            isAvailable() {
+                try {
+                    const test = '__storage_test__';
+                    localStorage.setItem(test, test);
+                    localStorage.removeItem(test);
+                    return true;
+                } catch (e) {
+                    return false;
+                }
+            },
+            
+            saveScore(time, score, level, date = new Date().toISOString()) {
+                if (!this.isAvailable()) {
+                    console.warn('LocalStorage unavailable - score not saved');
+                    return false;
+                }
+                
+                try {
+                    const history = this.loadScoreHistory();
+                    const newEntry = {
+                        time: time,
+                        score: score,
+                        level: level,
+                        date: date,
+                        id: Date.now().toString() + Math.random().toString(36).substr(2, 9)
+                    };
+                    
+                    history.push(newEntry);
+                    history.sort((a, b) => new Date(a.date) - new Date(b.date));
+                    
+                    localStorage.setItem(this.STORAGE_KEYS.SCORE_HISTORY, JSON.stringify(history));
+                    this.updateHighScore(time);
+                    
+                    return true;
+                } catch (e) {
+                    console.error('Error saving score:', e);
+                    return false;
+                }
+            },
+            
+            loadHighScore() {
+                if (!this.isAvailable()) {
+                    return null;
+                }
+                
+                try {
+                    const highScore = localStorage.getItem(this.STORAGE_KEYS.HIGH_SCORE);
+                    return highScore ? parseFloat(highScore) : null;
+                } catch (e) {
+                    console.error('Error loading high score:', e);
+                    return null;
+                }
+            },
+            
+            loadScoreHistory() {
+                if (!this.isAvailable()) {
+                    return [];
+                }
+                
+                try {
+                    const history = localStorage.getItem(this.STORAGE_KEYS.SCORE_HISTORY);
+                    return history ? JSON.parse(history) : [];
+                } catch (e) {
+                    console.error('Error loading score history:', e);
+                    return [];
+                }
+            },
+            
+            updateHighScore(time) {
+                if (!this.isAvailable()) {
+                    return false;
+                }
+                
+                try {
+                    const currentHighScore = this.loadHighScore();
+                    
+                    if (currentHighScore === null || time < currentHighScore) {
+                        localStorage.setItem(this.STORAGE_KEYS.HIGH_SCORE, time.toString());
+                        return true;
+                    }
+                    
+                    return false;
+                } catch (e) {
+                    console.error('Error updating high score:', e);
+                    return false;
+                }
+            },
+            
+            clearAll() {
+                if (!this.isAvailable()) {
+                    return false;
+                }
+                
+                try {
+                    localStorage.removeItem(this.STORAGE_KEYS.HIGH_SCORE);
+                    localStorage.removeItem(this.STORAGE_KEYS.SCORE_HISTORY);
+                    return true;
+                } catch (e) {
+                    console.error('Error clearing storage:', e);
+                    return false;
+                }
+            }
+        };
+
+        // Arbitrary generators for property-based testing
+        function arbGameSession() {
+            return fc.record({
+                time: fc.double({ min: 0.1, max: 999.9, noNaN: true }),
+                score: fc.integer({ min: 0, max: 100000 }),
+                level: fc.integer({ min: 1, max: 10 }),
+                date: fc.date({ min: new Date('2020-01-01'), max: new Date('2030-12-31') })
+                    .map(d => d.toISOString())
+            });
+        }
+
+        // Property Test Functions
+        function logResult(testName, passed, message, stats = null) {
+            const resultsDiv = document.getElementById('test-results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test-result ${passed ? 'pass' : 'fail'}`;
+            
+            let statsHtml = '';
+            if (stats) {
+                statsHtml = `<div class="stats">Runs: ${stats.numRuns} | Seed: ${stats.seed}</div>`;
+            }
+            
+            resultDiv.innerHTML = `
+                <div class="property-header">${passed ? '✅' : '❌'} ${testName}</div>
+                <div>${message}</div>
+                ${statsHtml}
+            `;
+            resultsDiv.appendChild(resultDiv);
+        }
+
+        async function runPropertyTest() {
+            const resultsDiv = document.getElementById('test-results');
+            resultsDiv.innerHTML = '<div class="loading">Running property-based test...</div>';
+            
+            // Clear storage before test
+            StorageManager.clearAll();
+            
+            // Small delay to show loading state
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            resultsDiv.innerHTML = '<h2>Property Test Results</h2>';
+            
+            try {
+                /**
+                 * Feature: game-enhancements, Property 1: Score persistence
+                 * 
+                 * Property: For any completed game session with valid time and score data,
+                 * saving to Local Storage should result in that data being retrievable 
+                 * with all fields intact (time, score, level, date).
+                 * 
+                 * Validates: Requirements 1.1
+                 */
+                const result = fc.check(
+                    fc.property(arbGameSession(), (session) => {
+                        // Clear storage before each test iteration
+                        StorageManager.clearAll();
+                        
+                        // Save the session
+                        const saved = StorageManager.saveScore(
+                            session.time,
+                            session.score,
+                            session.level,
+                            session.date
+                        );
+                        
+                        // Verify save was successful
+                        if (!saved) {
+                            return false;
+                        }
+                        
+                        // Load the score history
+                        const history = StorageManager.loadScoreHistory();
+                        
+                        // Find the saved entry by date (should be unique enough)
+                        const savedEntry = history.find(entry => entry.date === session.date);
+                        
+                        // Verify the entry exists and all fields match
+                        if (!savedEntry) {
+                            console.error('Entry not found in history');
+                            return false;
+                        }
+                        
+                        // Check all fields are intact
+                        const timeMatches = Math.abs(savedEntry.time - session.time) < 0.0001;
+                        const scoreMatches = savedEntry.score === session.score;
+                        const levelMatches = savedEntry.level === session.level;
+                        const dateMatches = savedEntry.date === session.date;
+                        const hasId = savedEntry.id !== undefined && savedEntry.id !== null;
+                        
+                        if (!timeMatches) {
+                            console.error(`Time mismatch: expected ${session.time}, got ${savedEntry.time}`);
+                        }
+                        if (!scoreMatches) {
+                            console.error(`Score mismatch: expected ${session.score}, got ${savedEntry.score}`);
+                        }
+                        if (!levelMatches) {
+                            console.error(`Level mismatch: expected ${session.level}, got ${savedEntry.level}`);
+                        }
+                        if (!dateMatches) {
+                            console.error(`Date mismatch: expected ${session.date}, got ${savedEntry.date}`);
+                        }
+                        if (!hasId) {
+                            console.error('ID field missing');
+                        }
+                        
+                        return timeMatches && scoreMatches && levelMatches && dateMatches && hasId;
+                    }),
+                    { numRuns: 100 }
+                );
+                
+                if (result.failed) {
+                    const counterexample = result.counterexample;
+                    logResult(
+                        'Property 1: Score Persistence',
+                        false,
+                        `<strong>Property FAILED</strong><br>
+                        Counterexample found:<br>
+                        <pre>${JSON.stringify(counterexample, null, 2)}</pre>
+                        <strong>Error:</strong> ${result.error || 'Property returned false'}`,
+                        { numRuns: result.numRuns, seed: result.seed }
+                    );
+                } else {
+                    logResult(
+                        'Property 1: Score Persistence',
+                        true,
+                        `<strong>Property PASSED</strong><br>
+                        All ${result.numRuns} test cases passed successfully.<br>
+                        For any game session, saving to storage preserves all fields (time, score, level, date).`,
+                        { numRuns: result.numRuns, seed: result.seed }
+                    );
+                }
+                
+            } catch (error) {
+                logResult(
+                    'Property 1: Score Persistence',
+                    false,
+                    `<strong>Test Error</strong><br>
+                    <pre>${error.message}\n${error.stack}</pre>`
+                );
+            }
+            
+            // Clean up after test
+            StorageManager.clearAll();
+        }
+
+        function clearStorage() {
+            StorageManager.clearAll();
+            alert('Storage cleared!');
+        }
+
+        // Check if fast-check loaded
+        window.onload = () => {
+            if (typeof fc === 'undefined') {
+                document.getElementById('test-results').innerHTML = `
+                    <div class="test-result fail">
+                        <strong>❌ Error</strong><br>
+                        fast-check library failed to load. Please check your internet connection.
+                    </div>
+                `;
+            } else {
+                document.getElementById('test-results').innerHTML = `
+                    <div class="test-section">
+                        <p>✅ fast-check library loaded successfully</p>
+                        <p>Click "Run Property Test" to execute the test suite.</p>
+                    </div>
+                `;
+            }
+        };
+    </script>
+</body>
+</html>

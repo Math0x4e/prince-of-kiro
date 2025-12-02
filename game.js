@@ -12,6 +12,128 @@ const CONFIG = {
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
+// Storage Manager - Persistent save system
+const StorageManager = {
+    STORAGE_KEYS: {
+        HIGH_SCORE: 'princeOfKiro_highScore',
+        SCORE_HISTORY: 'princeOfKiro_scoreHistory'
+    },
+    
+    // Check if LocalStorage is available
+    isAvailable() {
+        try {
+            const test = '__storage_test__';
+            localStorage.setItem(test, test);
+            localStorage.removeItem(test);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    },
+    
+    // Save a completed game session
+    saveScore(time, score, level, date = new Date().toISOString()) {
+        if (!this.isAvailable()) {
+            console.warn('LocalStorage unavailable - score not saved');
+            return false;
+        }
+        
+        try {
+            const history = this.loadScoreHistory();
+            const newEntry = {
+                time: time,
+                score: score,
+                level: level,
+                date: date,
+                id: Date.now().toString() + Math.random().toString(36).substr(2, 9)
+            };
+            
+            history.push(newEntry);
+            
+            // Sort chronologically by date
+            history.sort((a, b) => new Date(a.date) - new Date(b.date));
+            
+            localStorage.setItem(this.STORAGE_KEYS.SCORE_HISTORY, JSON.stringify(history));
+            
+            // Update high score if this is better
+            this.updateHighScore(time);
+            
+            return true;
+        } catch (e) {
+            console.error('Error saving score:', e);
+            return false;
+        }
+    },
+    
+    // Load high score (best/lowest time)
+    loadHighScore() {
+        if (!this.isAvailable()) {
+            return null;
+        }
+        
+        try {
+            const highScore = localStorage.getItem(this.STORAGE_KEYS.HIGH_SCORE);
+            return highScore ? parseFloat(highScore) : null;
+        } catch (e) {
+            console.error('Error loading high score:', e);
+            return null;
+        }
+    },
+    
+    // Load all score history
+    loadScoreHistory() {
+        if (!this.isAvailable()) {
+            return [];
+        }
+        
+        try {
+            const history = localStorage.getItem(this.STORAGE_KEYS.SCORE_HISTORY);
+            return history ? JSON.parse(history) : [];
+        } catch (e) {
+            console.error('Error loading score history:', e);
+            return [];
+        }
+    },
+    
+    // Update high score if new time is better (lower)
+    updateHighScore(time) {
+        if (!this.isAvailable()) {
+            return false;
+        }
+        
+        try {
+            const currentHighScore = this.loadHighScore();
+            
+            // Update if no high score exists or new time is better (lower)
+            if (currentHighScore === null || time < currentHighScore) {
+                localStorage.setItem(this.STORAGE_KEYS.HIGH_SCORE, time.toString());
+                return true; // New high score achieved
+            }
+            
+            return false; // Not a new high score
+        } catch (e) {
+            console.error('Error updating high score:', e);
+            return false;
+        }
+    },
+    
+    // Clear all saved data (for testing/reset)
+    clearAll() {
+        if (!this.isAvailable()) {
+            return false;
+        }
+        
+        try {
+            localStorage.removeItem(this.STORAGE_KEYS.HIGH_SCORE);
+            localStorage.removeItem(this.STORAGE_KEYS.SCORE_HISTORY);
+            return true;
+        } catch (e) {
+            console.error('Error clearing storage:', e);
+            return false;
+        }
+    }
+};
+
 // Game State
 let gameState = {
     currentLevel: 1,
@@ -20,7 +142,9 @@ let gameState = {
     startTime: Date.now(),
     elapsedTime: 0,
     isPaused: false,
-    gameOver: false
+    gameOver: false,
+    highScore: null,
+    isNewHighScore: false
 };
 
 // Player Object
@@ -116,6 +240,16 @@ let currentLevelData = null;
 function initGame() {
     loadLevel(gameState.currentLevel);
     gameState.startTime = Date.now();
+    
+    // Load high score from storage
+    gameState.highScore = StorageManager.loadHighScore();
+    updateHUD();
+    
+    // Show notification if LocalStorage is unavailable
+    if (!StorageManager.isAvailable()) {
+        console.warn('LocalStorage is unavailable. Scores will not be saved.');
+    }
+    
     gameLoop();
 }
 
@@ -353,12 +487,32 @@ function levelComplete() {
 // Game Win
 function gameWin() {
     gameState.isPaused = true;
-    const finalTime = ((Date.now() - gameState.startTime) / 1000).toFixed(1);
+    const finalTime = parseFloat(((Date.now() - gameState.startTime) / 1000).toFixed(1));
     const timeBonus = Math.max(0, 10000 - Math.floor(finalTime * CONFIG.scorePerSecond));
     gameState.score += timeBonus;
+    
+    // Check if this is a new high score BEFORE saving
+    const previousHighScore = StorageManager.loadHighScore();
+    gameState.isNewHighScore = previousHighScore === null || finalTime < previousHighScore;
+    
+    // Save score to storage (this also updates high score internally)
+    const saved = StorageManager.saveScore(finalTime, gameState.score, gameState.currentLevel);
+    
+    // Update high score in game state
+    gameState.highScore = StorageManager.loadHighScore();
     updateHUD();
     
-    showMessage('Victory!', `You found the Princess of Kiro!\\nFinal Score: ${gameState.score}\\nTime: ${finalTime}s`, () => {
+    let message = `You found the Princess of Kiro!\nFinal Score: ${gameState.score}\nTime: ${finalTime}s`;
+    
+    if (gameState.isNewHighScore) {
+        message += '\n\n🎉 NEW HIGH SCORE! 🎉';
+    }
+    
+    if (!saved) {
+        message += '\n\n(Score not saved - storage unavailable)';
+    }
+    
+    showMessage('Victory!', message, () => {
         resetGame();
     });
 }
@@ -414,6 +568,14 @@ function updateHUD() {
     document.getElementById('level-display').textContent = gameState.currentLevel;
     document.getElementById('lives-display').textContent = gameState.lives;
     document.getElementById('score-display').textContent = gameState.score;
+    
+    // Update high score display
+    const highScoreDisplay = document.getElementById('highscore-display');
+    if (gameState.highScore !== null) {
+        highScoreDisplay.textContent = gameState.highScore.toFixed(1) + 's';
+    } else {
+        highScoreDisplay.textContent = '--';
+    }
 }
 
 // Draw Persian Palace Background
